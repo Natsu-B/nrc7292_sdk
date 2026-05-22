@@ -584,25 +584,25 @@ static void ssl_update_checksum_md5sha1( mbedtls_ssl_context *, const unsigned c
 #endif
 
 #if defined(MBEDTLS_SSL_PROTO_SSL3)
-static void ssl_calc_verify_ssl( mbedtls_ssl_context *, unsigned char * );
+static void ssl_calc_verify_ssl( mbedtls_ssl_context *, unsigned char[36] );
 static void ssl_calc_finished_ssl( mbedtls_ssl_context *, unsigned char *, int );
 #endif
 
 #if defined(MBEDTLS_SSL_PROTO_TLS1) || defined(MBEDTLS_SSL_PROTO_TLS1_1)
-static void ssl_calc_verify_tls( mbedtls_ssl_context *, unsigned char * );
+static void ssl_calc_verify_tls( mbedtls_ssl_context *, unsigned char[36] );
 static void ssl_calc_finished_tls( mbedtls_ssl_context *, unsigned char *, int );
 #endif
 
 #if defined(MBEDTLS_SSL_PROTO_TLS1_2)
 #if defined(MBEDTLS_SHA256_C)
 static void ssl_update_checksum_sha256( mbedtls_ssl_context *, const unsigned char *, size_t );
-static void ssl_calc_verify_tls_sha256( mbedtls_ssl_context *,unsigned char * );
+static void ssl_calc_verify_tls_sha256( mbedtls_ssl_context *,unsigned char[32] );
 static void ssl_calc_finished_tls_sha256( mbedtls_ssl_context *,unsigned char *, int );
 #endif
 
 #if defined(MBEDTLS_SHA512_C)
 static void ssl_update_checksum_sha384( mbedtls_ssl_context *, const unsigned char *, size_t );
-static void ssl_calc_verify_tls_sha384( mbedtls_ssl_context *, unsigned char * );
+static void ssl_calc_verify_tls_sha384( mbedtls_ssl_context *, unsigned char[48] );
 static void ssl_calc_finished_tls_sha384( mbedtls_ssl_context *, unsigned char *, int );
 #endif
 #endif /* MBEDTLS_SSL_PROTO_TLS1_2 */
@@ -1218,18 +1218,21 @@ void ssl_calc_verify_tls_sha256( mbedtls_ssl_context *ssl, unsigned char hash[32
 void ssl_calc_verify_tls_sha384( mbedtls_ssl_context *ssl, unsigned char hash[48] )
 {
     mbedtls_sha512_context sha512;
+    unsigned char sha512sum[64];
 
     mbedtls_sha512_init( &sha512 );
 
     MBEDTLS_SSL_DEBUG_MSG( 2, ( "=> calc verify sha384" ) );
 
     mbedtls_sha512_clone( &sha512, &ssl->handshake->fin_sha512 );
-    mbedtls_sha512_finish_ret( &sha512, hash );
+    mbedtls_sha512_finish_ret( &sha512, sha512sum );
+    memcpy( hash, sha512sum, 48 );
 
     MBEDTLS_SSL_DEBUG_BUF( 3, "calculated verify result", hash, 48 );
     MBEDTLS_SSL_DEBUG_MSG( 2, ( "<= calc verify" ) );
 
     mbedtls_sha512_free( &sha512 );
+    mbedtls_platform_zeroize( sha512sum, sizeof( sha512sum ) );
 
     return;
 }
@@ -6275,7 +6278,7 @@ static void ssl_calc_finished_tls_sha384(
     int len = 12;
     const char *sender;
     mbedtls_sha512_context sha512;
-    unsigned char padbuf[48];
+    unsigned char padbuf[64];
 
     mbedtls_ssl_session *session = ssl->session_negotiate;
     if( !session )

@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+
+install_deps() {
+	instDeps=""
+	for pkg in build-essential python2.7 git xxd wget curl sudo; do
+		(dpkg -s $pkg >&/dev/null) || instDeps=$(echo $instDeps $pkg)
+	done
+
+	if [ -n "$instDeps" ]; then
+		echo ">>> Install dependencies: $instDeps"
+		sudo apt update
+		sudo apt install -y $instDeps
+	fi
+}
+
+install_toolchain() {
+	(which arm-none-eabi-gcc >&/dev/null) || {
+		arch_txt=""
+		[ "$(arch)" = "armv7l" ] && arch_txt="armhf" # For Raspberry Pi OS 32-bit
+		[ "$(arch)" = "x86_64" ] && arch_txt="amd64" # For most common linux system
+
+		[ -n "$arch_txt" ] || return
+
+		pkg_deps() {
+			cat <<-EOD
+				http://deb.debian.org/debian/pool/main/b/binutils-arm-none-eabi/binutils-arm-none-eabi_2.31.1-12+11_${arch_txt}.deb
+				http://deb.debian.org/debian/pool/main/g/gcc-arm-none-eabi/gcc-arm-none-eabi_7-2018-q2-6_${arch_txt}.deb
+				http://deb.debian.org/debian/pool/main/n/newlib/libnewlib-dev_3.1.0.20181231-1_all.deb
+				http://deb.debian.org/debian/pool/main/n/newlib/libnewlib-arm-none-eabi_3.1.0.20181231-1_all.deb
+				http://deb.debian.org/debian/pool/main/libs/libstdc++-arm-none-eabi/libstdc++-arm-none-eabi-newlib_7-2018-q2-5+12_all.deb
+			EOD
+		}
+
+		tmpd=$(mktemp -d)
+		(
+			cd $tmpd || exit
+			pkg_deps | while read -r PKG_URL; do
+				wget "$PKG_URL"
+				sudo dpkg -i "$(basename $PKG_URL)"
+			done
+		)
+		rm -r $tmpd
+	}
+}
+
+exec_in_baremetal() {
+	local APP_NAME=$1
+
+	cd $(dirname $(readlink -f $0))
+
+	install_deps
+	install_toolchain
+
+	source /etc/profile
+
+	ROOT_DIR=$(git rev-parse --show-toplevel)
+	cd $ROOT_DIR/package/standalone || exit
+
+	cat >.build-target <<-EOD
+		MAKEFILE = nrc7292.sdk.release
+		PARAM := -- APP_NAME=$APP_NAME
+	EOD
+
+	eval "make select target=nrc7292.sdk.release APP_NAME=$APP_NAME"
+	make
+}
+
+copy_binaries() {
+	ROOT_DIR=$(git rev-parse --show-toplevel)
+	cd $ROOT_DIR/package/standalone || exit
+	find ./out/ -type f -name '*.bin' -size +8k |
+		while read -r line; do
+			cp -v "$line" ./tools/external_tools/firmware/
+		done
+}
+
+exec_in_baremetal $@
+copy_binaries

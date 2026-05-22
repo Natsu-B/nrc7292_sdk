@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+
+build_docker_image() {
+	tmpd=$(mktemp -d)
+	u_uid=$(id --user)
+	cat >$tmpd/Dockerfile <<-EOD
+		FROM ubuntu:22.04
+		ENV DEBIAN_FRONTEND noninteractive
+		RUN apt update \
+			&& apt install -y \
+				build-essential \
+				python2.7 python-pip \
+				git xxd wget curl \
+				sudo
+		RUN ARM_GCC_URL="https://developer.arm.com/-/media/Files/downloads/gnu-rm/7-2018q2/gcc-arm-none-eabi-7-2018-q2-update-linux.tar.bz2?revision=bc2c96c0-14b5-4bb4-9f18-bceb4050fee7?product=GNU%20Arm%20Embedded%20Toolchain%20Downloads,64-bit,,Linux,7-2018-q2-update" ;\
+			curl -sL "\$ARM_GCC_URL" | tar -jxv -C /opt/ ;\
+			echo "PATH=\"\\\$PATH:/opt/gcc-arm-none-eabi-7-2018-q2-update/bin\"" >> /etc/profile.d/nrc7292_sdk.sh
+		RUN useradd --uid $u_uid --create-home --shell /bin/bash pi ;\
+			echo "pi:raspberry" | chpasswd ;\
+			echo "pi ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/pi
+		USER pi
+	EOD
+	docker build --platform linux/x86_64 -t nrc7292_sdk:latest $tmpd
+	rm -r $tmpd
+}
+
+exec_outside_docker() {
+	ROOT_DIR=$(git rev-parse --show-toplevel)
+	(docker image inspect nrc7292_sdk:latest >&/dev/null) || build_docker_image
+	docker run --platform linux/x86_64 --rm -it -v $ROOT_DIR:/tmp/build nrc7292_sdk:latest /tmp/build/scripts/build_in_docker $@
+}
+
+exec_in_docker() {
+	local APP_NAME=$1
+
+	source /etc/profile
+	cd /tmp/build
+	cd ./package/standalone || exit
+
+	cat >.build-target <<-EOD
+		MAKEFILE = nrc7292.sdk.release
+		PARAM := -- APP_NAME=$APP_NAME
+	EOD
+
+	eval "make select target=nrc7292.sdk.release APP_NAME=$APP_NAME"
+	make
+}
+
+copy_binaries() {
+	ROOT_DIR=$(git rev-parse --show-toplevel)
+	cd $ROOT_DIR/package/standalone || exit
+	find ./out/ -type f -name '*.bin' -size +8k |
+		while read -r line; do
+			cp -v "$line" ./tools/external_tools/firmware/
+		done
+}
+
+#
+# The scripts invoke itself like below:
+#   PROG -> exec_outside_docker() -> docker -> PROG -> exec_outside_docker()
+#
+if [ -e "/.dockerenv" ]; then
+	exec_in_docker $@
+	copy_binaries
+else
+	exec_outside_docker $@
+fi

@@ -1,0 +1,9 @@
+*.d
+*.o
+*.bin
+*.i
+*.txt
+*.map
+*.nm
+*.lst
+*.elfv
